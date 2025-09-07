@@ -1,0 +1,670 @@
+#!/usr/bin/env python3
+"""
+优化的人脸采集模块 - OV5647专用版
+高性能、多模式的人脸采集工具
+"""
+import cv2
+import os
+import time
+from datetime import datetime
+import numpy as np
+import threading
+import queue
+import subprocess
+import sys
+import json
+
+try:
+    from picamera2 import Picamera2
+    USE_PICAMERA2 = True
+except ImportError:
+    USE_PICAMERA2 = False
+
+class OptimizedFaceCapture:
+    def __init__(self, save_dir="faces", preview_fps=30):
+        self.save_dir = save_dir
+        self.preview_fps = preview_fps
+        
+        # 创建保存目录
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # 初始化参数
+        self.captured_count = 0
+        self.is_running = True
+        self.show_face_rect = True
+        self.enable_denoise = True
+        self.brightness = 0
+        self.contrast = 1.0
+        self.face_detection_scale = 0.5
+        self.fps = 0.0
+        
+        # 加载配置
+        self.load_config()
+        
+        # 初始化人脸检测器
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        )
+        
+        # 初始化帧队列
+        self.frame_queue = queue.Queue(maxsize=2)
+        
+        # 初始化摄像头
+        self.init_ov5647_camera()
+        
+        print("✓ OptimizedFaceCapture初始化完成")
+        
+    def load_config(self):
+        """加载配置文件"""
+        config_file = 'config.json'
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    self.config = json.load(f)
+                print("✓ 配置文件加载成功")
+            except Exception as e:
+                print(f"配置文件加载失败: {e}")
+                self.config = self.get_default_config()
+        else:
+            print("未找到配置文件，使用默认配置")
+            self.config = self.get_default_config()
+    
+    def get_default_config(self):
+        """获取默认配置"""
+        return {
+            "camera": {
+                "type": "ov5647",
+                "width": 1296,
+                "height": 972,
+                "fps": 30,
+                "backend": "v4l2"
+            },
+            "capture_quality": 95,
+            "face_detection_scale": 0.5
+        }
+        
+    def detect_camera(self):
+        """检测可用的摄像头"""
+        print("检测摄像头...")
+        
+        # 检查是否有picamera2可用
+        if USE_PICAMERA2:
+            try:
+                test_cam = Picamera2()
+                test_cam.close()
+                print("✓ 检测到Picamera2支持")
+                return "picamera2"
+            except Exception as e:
+                print(f"Picamera2不可用: {e}")
+        
+        # 检查OpenCV摄像头
+        for i in range(3):
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                ret, _ = cap.read()
+                cap.release()
+                if ret:
+                    print(f"✓ 检测到OpenCV摄像头 /dev/video{i}")
+                    return f"opencv_{i}"
+        
+        print("⚠ 未检测到可用摄像头")
+        return None
+        
+    def init_ov5647_camera(self):
+        """修改这个方法"""
+        print("初始化摄像头...")
+        
+        if USE_PICAMERA2:
+            try:
+                self.picam2 = Picamera2()
+                config = self.picam2.create_preview_configuration(
+                    main={"size": (1296, 972), "format": "RGB888"}
+                )
+                self.picam2.configure(config)
+                self.picam2.start()
+                self.camera_type = "picamera2"
+                self.camera = None  # 不使用OpenCV camera
+                print("✓ 使用Picamera2初始化成功")
+                return
+            except Exception as e:
+                print(f"Picamera2初始化失败: {e}")
+        
+        # 原有的OpenCV初始化代码...
+        self.camera_type = "opencv"
+        try:
+            # 尝试V4L2后端（最适合OV5647）
+            self.camera = cv2.VideoCapture(0, cv2.CAP_V4L2)
+            
+            if not self.camera.isOpened():
+                print("V4L2后端失败，尝试默认后端...")
+                self.camera = cv2.VideoCapture(0)
+            
+            if not self.camera.isOpened():
+                raise Exception("无法打开摄像头")
+            
+            # 设置OV5647最优参数
+            width = self.config['camera'].get('width', 1296)
+            height = self.config['camera'].get('height', 972)
+            fps = self.config['camera'].get('fps', 30)
+            
+            self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+            self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self.camera.set(cv2.CAP_PROP_FPS, fps)
+            self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
+            print(f"✓ OpenCV摄像头初始化成功 {width}x{height}@{fps}fps")
+            
+        except Exception as e:
+            print(f"摄像头初始化失败: {e}")
+            self.camera = None
+            raise 
+
+    # ========== 在这里添加 get_frame 方法 ==========
+    def get_frame(self):
+        """获取一帧图像"""
+        if self.camera_type == "picamera2":
+            frame = self.picam2.capture_array()
+            # RGB转BGR
+            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        else:
+            # 原有的OpenCV方式
+            if self.camera:
+                ret, frame = self.camera.read()
+                return frame if ret else None
+            return None
+    
+    # ========== 修改 camera_thread 方法 ==========
+    def camera_thread(self):
+        """相机捕获线程 - 修改版"""
+        print("摄像头线程启动")
+        frame_count = 0
+        
+        while self.is_running:
+            # 使用新的 get_frame 方法
+            frame = self.get_frame()
+            if frame is not None:
+                frame_count += 1
+                if frame_count % 2 == 0:
+                    frame = self.enhance_image(frame)
+                    
+                    if not self.frame_queue.full():
+                        try:
+                            self.frame_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                        self.frame_queue.put(frame)
+    
+    def enhance_image(self, frame):
+        """OV5647图像增强"""
+        # 亮度和对比度调整
+        if self.brightness != 0 or self.contrast != 1.0:
+            frame = cv2.convertScaleAbs(frame, alpha=self.contrast, beta=self.brightness)
+        
+        # 可选降噪
+        if self.enable_denoise:
+            frame = cv2.bilateralFilter(frame, 5, 50, 50)  # 快速降噪
+        
+        return frame
+    
+    def detect_faces(self, frame):
+        """优化的人脸检测 - 针对OV5647调整"""
+        height, width = frame.shape[:2]
+        small_frame = cv2.resize(frame, 
+                                (int(width * self.face_detection_scale), 
+                                 int(height * self.face_detection_scale)))
+        
+        gray_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+        
+        # OV5647图像增强
+        gray_small = cv2.equalizeHist(gray_small)
+        
+        # 调整检测参数以适应OV5647
+        faces_small = self.face_cascade.detectMultiScale(
+            gray_small,
+            scaleFactor=1.15,
+            minNeighbors=4,
+            minSize=(30, 30),
+            flags=cv2.CASCADE_SCALE_IMAGE
+        )
+        
+        # 转换坐标回原始尺寸
+        faces = []
+        for (x, y, w, h) in faces_small:
+            faces.append((
+                int(x / self.face_detection_scale),
+                int(y / self.face_detection_scale),
+                int(w / self.face_detection_scale),
+                int(h / self.face_detection_scale)
+            ))
+        
+        return faces
+    
+    def draw_ui(self, frame, faces):
+        """绘制UI元素"""
+        height, width = frame.shape[:2]
+        
+        # 绘制人脸框
+        if self.show_face_rect:
+            for (x, y, w, h) in faces:
+                # 主框
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                
+                # 角标记
+                corner_length = 20
+                corner_thickness = 3
+                
+                # 左上角
+                cv2.line(frame, (x, y), (x + corner_length, y), (0, 255, 0), corner_thickness)
+                cv2.line(frame, (x, y), (x, y + corner_length), (0, 255, 0), corner_thickness)
+                # 右上角
+                cv2.line(frame, (x+w, y), (x+w - corner_length, y), (0, 255, 0), corner_thickness)
+                cv2.line(frame, (x+w, y), (x+w, y + corner_length), (0, 255, 0), corner_thickness)
+                # 左下角
+                cv2.line(frame, (x, y+h), (x + corner_length, y+h), (0, 255, 0), corner_thickness)
+                cv2.line(frame, (x, y+h), (x, y+h - corner_length), (0, 255, 0), corner_thickness)
+                # 右下角
+                cv2.line(frame, (x+w, y+h), (x+w - corner_length, y+h), (0, 255, 0), corner_thickness)
+                cv2.line(frame, (x+w, y+h), (x+w, y+h - corner_length), (0, 255, 0), corner_thickness)
+                
+                # 状态指示
+                if len(faces) == 1:
+                    cv2.putText(frame, "Ready", (x, y-10), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # 创建信息面板背景
+        info_bg = np.zeros((100, width, 3), dtype=np.uint8)
+        info_bg[:] = (40, 40, 40)
+        
+        # 添加半透明效果
+        frame[0:100, :] = cv2.addWeighted(frame[0:100, :], 0.7, info_bg, 0.3, 0)
+        
+        # 显示信息
+        cv2.putText(frame, f"FPS: {self.fps:.1f}", (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.putText(frame, f"Captured: {self.captured_count}", (10, 60), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(frame, f"Faces: {len(faces)}", (10, 90), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        
+        # 控制提示
+        controls = [
+            "SPACE: Capture",
+            "A: Auto Mode",
+            "S: Save & Exit", 
+            "Q: Quit",
+            "F: Toggle Face Box",
+            "D: Denoise On/Off",
+            "+/-: Brightness"
+        ]
+        
+        x_offset = 250
+        y_start = 20
+        for i, control in enumerate(controls):
+            if i < 4:
+                cv2.putText(frame, control, (x_offset, y_start + i*20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            else:
+                cv2.putText(frame, control, (x_offset + 150, y_start + (i-4)*20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+        
+        # 状态栏
+        status_y = height - 30
+        status_bg = np.zeros((50, width, 3), dtype=np.uint8)
+        status_bg[:] = (40, 40, 40)
+        frame[status_y:, :] = cv2.addWeighted(frame[status_y:, :], 0.7, status_bg, 0.3, 0)
+        
+        if len(faces) == 0:
+            status_text = "No face detected"
+            status_color = (0, 0, 255)
+        elif len(faces) == 1:
+            status_text = "Press SPACE to capture"
+            status_color = (0, 255, 0)
+        else:
+            status_text = f"{len(faces)} faces detected"
+            status_color = (0, 165, 255)
+        
+        # 居中显示状态文本
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        text_size = cv2.getTextSize(status_text, font, 0.8, 2)[0]
+        text_x = (width - text_size[0]) // 2
+        cv2.putText(frame, status_text, (text_x, height - 5), 
+                   font, 0.8, status_color, 2)
+        
+        # 显示增强状态
+        if self.enable_denoise:
+            cv2.putText(frame, "Denoise: ON", (width - 120, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        
+        if self.brightness != 0:
+            cv2.putText(frame, f"Brightness: {self.brightness:+d}", (width - 150, 50), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        return frame
+    
+    def save_face(self, frame, faces, person_name, save_full_frame=False):
+        """保存人脸图像"""
+        if len(faces) == 0:
+            print("未检测到人脸，无法保存")
+            return False
+        
+        person_dir = os.path.join(self.save_dir, person_name)
+        if not os.path.exists(person_dir):
+            os.makedirs(person_dir)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        quality = self.config.get('capture_quality', 95)
+        
+        if save_full_frame:
+            # 保存完整画面
+            filename = f"{person_name}_full_{timestamp}.jpg"
+            filepath = os.path.join(person_dir, filename)
+            cv2.imwrite(filepath, frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            print(f"保存完整画面: {filename}")
+        
+        # 保存每个检测到的人脸
+        for i, (x, y, w, h) in enumerate(faces):
+            # 扩大裁剪区域
+            margin = 50
+            y1 = max(0, y - margin)
+            y2 = min(frame.shape[0], y + h + margin)
+            x1 = max(0, x - margin)
+            x2 = min(frame.shape[1], x + w + margin)
+            
+            face_img = frame[y1:y2, x1:x2]
+            
+            # 保存原始大小
+            filename = f"{person_name}_{timestamp}_{i}.jpg"
+            filepath = os.path.join(person_dir, filename)
+            cv2.imwrite(filepath, face_img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            
+            # 同时保存标准化大小的版本（用于训练）
+            face_img_resized = cv2.resize(face_img, (200, 200))
+            filename_std = f"{person_name}_{timestamp}_{i}_std.jpg"
+            filepath_std = os.path.join(person_dir, filename_std)
+            cv2.imwrite(filepath_std, face_img_resized, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            
+            print(f"保存人脸 {i+1}: {filename}")
+        
+        return True
+    
+    def capture_faces_interactive(self, person_name, target_count=20):
+        """交互式人脸采集"""
+        print(f"\n=== 开始采集 {person_name} 的人脸数据 ===")
+        print("控制说明：")
+        print("  SPACE - 拍照")
+        print("  A - 自动模式开关")
+        print("  S - 保存并退出")
+        print("  Q - 放弃并退出")
+        print("  F - 切换人脸框显示")
+        print("  D - 切换降噪")
+        print("  +/- - 调整亮度")
+        print(f"\n目标采集数量: {target_count}")
+        
+        # 创建窗口并设置属性
+        window_name = f"Face Capture - {person_name} (OV5647)"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, 960, 720)
+        
+        # 启动相机线程
+        camera_thread = threading.Thread(target=self.camera_thread)
+        camera_thread.daemon = True
+        camera_thread.start()
+        
+        # 等待相机初始化
+        time.sleep(1)
+        
+        # FPS计算变量
+        fps_start_time = time.time()
+        fps_frame_count = 0
+        
+        captured_frames = []
+        last_capture_time = 0
+        capture_cooldown = 0.5
+        
+        auto_mode = False
+        auto_counter = 0
+        
+       # 如果使用picamera2，不需要启动camera_thread
+        if self.camera_type != "picamera2":
+            camera_thread = threading.Thread(target=self.camera_thread)
+            camera_thread.daemon = True
+            camera_thread.start()
+        
+        try:
+            while True:
+                # 根据类型获取帧
+                if self.camera_type == "picamera2":
+                    frame = self.get_frame()
+                    if frame is None:
+                        continue
+                else:
+                    # 从队列获取
+                    try:
+                        frame = self.frame_queue.get_nowait()
+                    except queue.Empty:
+                        continue 
+                
+                # 镜像显示（更自然）
+                display_frame = cv2.flip(frame, 1)
+                
+                # 检测人脸
+                faces = self.detect_faces(display_frame)
+                
+                # 绘制UI
+                display_frame = self.draw_ui(display_frame, faces)
+                
+                # 计算FPS
+                fps_frame_count += 1
+                if fps_frame_count >= 10:
+                    fps_end_time = time.time()
+                    self.fps = fps_frame_count / (fps_end_time - fps_start_time)
+                    fps_start_time = fps_end_time
+                    fps_frame_count = 0
+                
+                # 自动模式
+                current_time = time.time()
+                if auto_mode and len(faces) == 1:
+                    auto_counter += 1
+                    if auto_counter > 20 and current_time - last_capture_time > 1.5:
+                        # 保存原始方向的帧
+                        self.save_face(frame, faces, person_name)
+                        self.captured_count += 1
+                        last_capture_time = current_time
+                        auto_counter = 0
+                        
+                        print(f"自动拍摄 {self.captured_count}/{target_count}")
+                        
+                        if self.captured_count >= target_count:
+                            print(f"\n已达到目标数量 {target_count}!")
+                            break
+                
+                # 显示画面
+                cv2.imshow(window_name, display_frame)
+                
+                # 处理按键
+                key = cv2.waitKey(1) & 0xFF
+                
+                if key == ord(' '):  # 空格键 - 拍照
+                    if current_time - last_capture_time > capture_cooldown:
+                        if len(faces) > 0:
+                            # 保存当前帧（原始方向）
+                            self.save_face(frame, faces, person_name)
+                            self.captured_count += 1
+                            last_capture_time = current_time
+                            
+                            # 视觉反馈 - 闪白
+                            white_frame = np.ones_like(display_frame) * 255
+                            cv2.imshow(window_name, white_frame)
+                            cv2.waitKey(50)
+                            
+                            print(f"已拍摄 {self.captured_count}/{target_count}")
+                            
+                            if self.captured_count >= target_count:
+                                print(f"\n已达到目标数量 {target_count}!")
+                                print("按 S 保存并退出，或继续拍摄更多")
+                        else:
+                            print("未检测到人脸，请调整位置")
+                    else:
+                        print("拍照太快，请稍等...")
+                
+                elif key == ord('a') or key == ord('A'):  # A - 自动模式
+                    auto_mode = not auto_mode
+                    auto_counter = 0
+                    print(f"自动模式: {'开' if auto_mode else '关'}")
+                
+                elif key == ord('s') or key == ord('S'):  # S - 保存并退出
+                    if self.captured_count > 0:
+                        print(f"\n总共采集了 {self.captured_count} 张照片")
+                        break
+                    else:
+                        print("还没有拍摄任何照片")
+                
+                elif key == ord('q') or key == ord('Q'):  # Q - 退出不保存
+                    print("\n取消采集")
+                    self.captured_count = 0
+                    break
+                
+                elif key == ord('f') or key == ord('F'):  # F - 切换人脸框
+                    self.show_face_rect = not self.show_face_rect
+                    print(f"人脸框显示: {'开' if self.show_face_rect else '关'}")
+                
+                elif key == ord('d') or key == ord('D'):  # D - 切换降噪
+                    self.enable_denoise = not self.enable_denoise
+                    print(f"降噪: {'开' if self.enable_denoise else '关'}")
+                
+                elif key == ord('+') or key == ord('='):  # 增加亮度
+                    self.brightness = min(self.brightness + 10, 100)
+                    print(f"亮度: {self.brightness}")
+                
+                elif key == ord('-') or key == ord('_'):  # 减少亮度
+                    self.brightness = max(self.brightness - 10, -100)
+                    print(f"亮度: {self.brightness}")
+                
+                elif key == 27:  # ESC - 退出
+                    print("\n用户取消")
+                    break
+        
+        finally:
+            # 清理
+            self.is_running = False
+            cv2.destroyAllWindows()
+            camera_thread.join(timeout=1)
+            
+            return self.captured_count > 0
+    
+    def capture_batch_photos(self, person_name, burst_count=5):
+        """连拍模式 - 按一次空格连续拍摄多张"""
+        print(f"\n=== 连拍模式 - {person_name} ===")
+        print(f"按空格键连拍 {burst_count} 张")
+        print("按 Q 退出")
+        
+        window_name = f"Burst Capture - {person_name} (OV5647)"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, 960, 720)
+        
+        # 启动相机线程
+        camera_thread = threading.Thread(target=self.camera_thread)
+        camera_thread.daemon = True
+        camera_thread.start()
+        
+        time.sleep(1)
+        
+        try:
+            while True:
+                try:
+                    frame = self.frame_queue.get_nowait()
+                except queue.Empty:
+                    continue
+                
+                display_frame = cv2.flip(frame, 1)
+                faces = self.detect_faces(display_frame)
+                display_frame = self.draw_ui(display_frame, faces)
+                cv2.imshow(window_name, display_frame)
+                
+                key = cv2.waitKey(1) & 0xFF
+                
+                if key == ord(' ') and len(faces) > 0:
+                    print(f"开始连拍 {burst_count} 张...")
+                    
+                    for i in range(burst_count):
+                        # 获取新帧
+                        try:
+                            burst_frame = self.frame_queue.get(timeout=0.2)
+                        except queue.Empty:
+                            continue
+                        
+                        burst_faces = self.detect_faces(burst_frame)
+                        if len(burst_faces) > 0:
+                            self.save_face(burst_frame, burst_faces, person_name)
+                            self.captured_count += 1
+                            
+                            # 显示拍摄进度
+                            progress_frame = cv2.flip(burst_frame, 1)
+                            cv2.putText(progress_frame, f"Burst {i+1}/{burst_count}", 
+                                      (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 
+                                      2, (0, 255, 0), 3)
+                            cv2.imshow(window_name, progress_frame)
+                            cv2.waitKey(100)
+                    
+                    print(f"连拍完成，总计: {self.captured_count} 张")
+                
+                elif key == ord('q') or key == ord('Q') or key == 27:
+                    break
+        
+        finally:
+            self.is_running = False
+            cv2.destroyAllWindows()
+            camera_thread.join(timeout=1)
+            
+            return self.captured_count > 0
+    
+    def __del__(self):
+        """析构函数 - 释放资源"""
+        if hasattr(self, 'camera_type'):
+            if self.camera_type == "picamera2" and hasattr(self, 'picam2'):
+                self.picam2.stop()
+                self.picam2.close()
+            elif hasattr(self, 'camera') and self.camera:
+                self.camera.release()
+        cv2.destroyAllWindows()
+
+# 独立运行测试
+if __name__ == "__main__":
+    import sys
+    
+    print("=== OV5647优化版人脸采集工具 ===")
+    print("1. 交互式采集（推荐）")
+    print("2. 连拍模式")
+    
+    mode = input("选择模式 (1/2) [1]: ").strip() or "1"
+    person_name = input("输入用户名: ").strip()
+    
+    if not person_name:
+        print("用户名不能为空")
+        sys.exit(1)
+    
+    try:
+        capture = OptimizedFaceCapture()
+        
+        if mode == "1":
+            count = input("目标采集数量 [20]: ").strip()
+            count = int(count) if count else 20
+            success = capture.capture_faces_interactive(person_name, count)
+        elif mode == "2":
+            burst = input("连拍数量 [5]: ").strip()
+            burst = int(burst) if burst else 5
+            success = capture.capture_batch_photos(person_name, burst)
+        else:
+            print("无效选择")
+            sys.exit(1)
+        
+        if success:
+            print("\n采集成功！")
+            print(f"照片保存在: faces/{person_name}/")
+        else:
+            print("\n采集取消")
+            
+    except Exception as e:
+        print(f"\n错误: {e}")
+        sys.exit(1)

@@ -1,0 +1,223 @@
+{
+  "camera": {
+    "type": "ov5647",
+    "backend": "rpicam",
+    "width": 1296,
+    "height": 972,
+    "fps": 30,
+    "capture_quality": 95,
+    "preview_enabled": false,
+    "flip_horizontal": false,
+    "flip_vertical": false
+  },
+  "mac": {
+    "enabled": true,
+    "host": "YOUR_MAC_IP_OR_HOSTNAME",
+    "port": 5001,
+    "username": "YOUR_MAC_USERNAME",
+    "password": "YOUR_MAC_PASSWORD"
+  },
+  "bluetooth": {
+    "enabled": false,
+    "device_address": "XX:XX:XX:XX:XX:XX",
+    "device_name": "MI Band 4",
+    "trigger_button": 1,
+    "scan_interval": 5,
+    "auto_reconnect": true,
+    "devices": [
+      {
+        "name": "蓝牙旋钮",
+        "address": "XX:XX:XX:XX:XX:XX",
+        "type": "button",
+        "enabled": false
+      }
+    ]
+  },
+  "web": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 5000,
+    "debug": false,
+    "secret_key": "your-secret-key-here",
+    "allow_remote": true,
+    "authentication": false,
+    "username": "admin",
+    "password": "admin123"
+  },
+  "trigger_modes": {
+    "manual": true,
+    "button": false,
+    "web": true,
+    "auto": false,
+    "motion": false,
+    "schedule": false,
+    "voice": false,
+    "proximity": false
+  },
+  "schedule": {
+    "enabled": false,
+    "active_hours": {
+      "start": "08:00",
+      "end": "22:00"
+    },
+    "days": [
+      "monday",
+      "tuesday",
+      "wednesday",
+      "thursday",
+      "friday"
+    ],
+    "check_interval_minutes": 5
+  },
+  "security": {
+    "max_attempts": 3,
+    "lockout_time": 300,
+    "alert_on_unknown": true,
+    "save_failed_attempts": true,
+    "failed_attempts_dir": "failed_attempts",
+    "two_factor": false,
+    "require_liveness": false
+  },
+  "notification": {
+    "enabled": false,
+    "methods": {
+      "email": {
+        "enabled": false,
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": 587,
+        "sender": "your_email@gmail.com",
+        "password": "your_app_password",
+        "recipients": [
+          "recipient@example.com"
+        ]
+      },
+      "telegram": {
+        "enabled": false,
+        "bot_token": "your_bot_token",
+        "chat_id": "your_chat_id"
+      },
+      "pushbullet": {
+        "enabled": false,
+        "api_key": "your_api_key"
+      }
+    },
+    "events": {
+      "successful_unlock": true,
+      "failed_attempt": true,
+      "unknown_face": true,
+      "system_start": false,
+      "system_stop": false
+    }
+  },
+  "system": {
+    "log_level": "INFO",
+    "log_dir": "logs",
+    "max_log_size_mb": 10,
+    "log_rotation_count": 5,
+    "database": {
+      "type": "sqlite",
+      "path": "face_unlock.db"
+    },
+    "backup": {
+      "enabled": false,
+      "interval_hours": 24,
+      "backup_dir": "backups",
+      "keep_days": 7
+    }
+  },
+  "performance": {
+    "max_cpu_percent": 80,
+    "max_memory_mb": 512,
+    "gpu_acceleration": false,
+    "threading": true,
+    "max_workers": 4,
+    "cache_encodings": true,
+    "cache_size_mb": 100
+  },
+  "authorized_users": [
+    "user1"
+  ],
+  "advanced": {
+    "face_enhance": false,
+    "super_resolution": false,
+    "batch_processing": false,
+    "multi_face_tracking": false,
+    "face_alignment": true,
+    "histogram_equalization": false,
+    "noise_reduction": false
+  },
+  "gpio": {
+    "enabled": false,
+    "led_pin": 18,
+    "button_pin": 23,
+    "relay_pin": 24,
+    "buzzer_pin": 25,
+    "use_pwm": false
+  },
+  "mqtt": {
+    "enabled": false,
+    "broker": "localhost",
+    "port": 1883,
+    "username": "",
+    "password": "",
+    "topic_prefix": "face_unlock",
+    "topics": {
+      "status": "face_unlock/status",
+      "unlock": "face_unlock/unlock",
+      "detection": "face_unlock/detection"
+    }
+  },
+  "api": {
+    "enabled": false,
+    "base_url": "/api/v1",
+    "api_key": "your-api-key",
+    "rate_limit": 100,
+    "endpoints": {
+      "recognize": true,
+      "unlock": true,
+      "status": true,
+      "logs": false,
+      "config": false
+    }
+  },
+  "motion_detection": {
+    "enabled": false,
+    "sensitivity": 50,
+    "min_area": 500,
+    "trigger_delay": 2,
+    "cooldown": 30
+  },
+  "pir_sensor": {
+    "enabled": false,
+    "gpio_pin": 17,
+    "trigger_delay": 1,
+    "sensitivity": "high"
+  },
+  "voice_control": {
+    "enabled": false,
+    "wake_word": "hey pi",
+    "language": "en-US",
+    "engine": "pocketsphinx"
+  },
+  "integration": {
+    "home_assistant": {
+      "enabled": false,
+      "url": "http://homeassistant.local:8123",
+      "token": "your_token"
+    },
+    "alexa": {
+      "enabled": false,
+      "skill_id": ""
+    },
+    "google_home": {
+      "enabled": false,
+      "project_id": ""
+    }
+  },
+  "experimental": {
+    "3d_face_recognition": false,
+    "thermal_camera": false,
+    "depth_camera": false,
+    "multi_spectrum": false
+  }
+}

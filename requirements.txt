@@ -1,0 +1,46 @@
+# 核心依赖
+face-recognition>=1.3.0
+opencv-python>=4.5.0
+numpy>=1.21.0
+Pillow>=8.0.0
+
+# Web服务
+Flask>=2.0.0
+requests>=2.25.0
+
+# 系统工具
+psutil>=5.8.0
+
+# 数据处理
+pickle-mixin>=1.0.2
+
+# 可选依赖（用于扩展功能）
+# 如果需要更高级的图像处理功能，可以取消注释以下依赖：
+
+# 高级图像处理
+# scikit-image>=0.18.0
+# matplotlib>=3.3.0
+
+# 机器学习（用于模型优化）
+# scikit-learn>=1.0.0
+# tensorflow>=2.6.0  # 如果需要深度学习功能
+
+# 数据库支持
+# sqlite3  # Python标准库，无需安装
+
+# 通信协议支持
+# paho-mqtt>=1.5.0  # MQTT支持
+# bleak>=0.14.0     # 蓝牙支持
+
+# 音频处理（语音控制）
+# pyaudio>=0.2.11
+# speech-recognition>=3.8.0
+
+# 图像增强
+# dlib>=19.22.0  # 高级面部识别（编译复杂，可选）
+
+# 注意：
+# 1. 在树莓派上安装face-recognition可能需要较长时间
+# 2. 建议先安装dlib和cmake：sudo apt-get install cmake
+# 3. opencv-python在树莓派上建议使用预编译版本
+# 4. 如果安装失败，可以尝试使用系统包管理器安装OpenCV
