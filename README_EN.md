@@ -1,5 +1,7 @@
 # 🔐 Raspberry Pi Face Recognition Unlock System
 
+[中文](README.md) 
+
 An intelligent face recognition unlock system based on Raspberry Pi that supports automatic recognition and unlocking of Mac computers.
 
 ## ✨ Features
@@ -98,7 +100,7 @@ face_unlock_system/
 ## 📖 Detailed Documentation
 
 - [Complete Deployment Guide](DEPLOYMENT_EN.md) - Detailed installation and configuration instructions
-- [Service Management Documentation](SERVICE_README.md) - System service management guide
+- [Service Management Documentation](SERVICE_README_EN.md) - System service management guide
 
 ## 🔧 Configuration
 
