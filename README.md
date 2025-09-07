@@ -1,10 +1,11 @@
 # 树莓派人脸识别解锁系统
 
+Raspberry Pi Face Recognition Unlocking System
+[English](README_EN.md) 
+
 一个基于树莓派的智能人脸识别解锁系统，支持自动识别并解锁 Mac 电脑。
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/xsj57/RespberryPi_face_unlock)
-
-- [English](README_EN.md) - 系统服务管理指南
 
 ## ✨ 特性
 
